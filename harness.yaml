@@ -1,0 +1,90 @@
+environment_variables:
+  APP_ENV:
+    required: true
+    example: development
+  DATABASE_URL:
+    required: true
+    example: "sqlite:///./data/clip_agent.db"
+  SESSION_SECRET:
+    required: true
+    example: "resolve-from-secret-manager"
+  MIMO_API_KEY:
+    required: false
+    example: "resolve-from-user-secret-store-or-environment"
+  MIMO_BASE_URL:
+    required: true
+    example: "https://api.xiaomimimo.com/v1"
+  MEDIA_STORAGE_ROOT:
+    required: true
+    example: "./data/media"
+
+tools_config:
+  mimo_tts:
+    provider: Xiaomi MiMo
+    api_style: openai_chat_completions
+    base_url_env: MIMO_BASE_URL
+    endpoint: /chat/completions
+    model: mimo-v2.5-tts
+    timeout_seconds: 60
+    output_formats:
+      - wav
+      - mp3
+      - pcm16
+    voices:
+      - display_name: 冰糖
+        voice_id: 冰糖
+        language: zh-CN
+        gender: female
+      - display_name: 茉莉
+        voice_id: 茉莉
+        language: zh-CN
+        gender: female
+      - display_name: 苏打
+        voice_id: 苏打
+        language: zh-CN
+        gender: male
+      - display_name: 白桦
+        voice_id: 白桦
+        language: zh-CN
+        gender: male
+      - display_name: Mia
+        voice_id: Mia
+        language: en-US
+        gender: female
+      - display_name: Chloe
+        voice_id: Chloe
+        language: en-US
+        gender: female
+      - display_name: Milo
+        voice_id: Milo
+        language: en-US
+        gender: male
+      - display_name: Dean
+        voice_id: Dean
+        language: en-US
+        gender: male
+
+permissions:
+  filesystem:
+    read:
+      - ./data/media
+      - ./templates
+    write:
+      - ./data/media
+      - ./data/exports
+      - ./data/checkpoints
+      - ./data/clip_agent.db
+    deny:
+      - ./.env
+      - ./.git
+  network:
+    allow:
+      - https://api.xiaomimimo.com
+    deny_private_networks: true
+  secrets:
+    source: encrypted_user_store_or_environment
+    state_exposure: deny
+    log_values: false
+  database:
+    enforce_user_scope: true
+    allow_raw_sql_from_user_input: false

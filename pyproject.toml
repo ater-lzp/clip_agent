@@ -1,0 +1,26 @@
+[project]
+name = "clip-agent"
+version = "0.1.0"
+requires-python = ">=3.10.9,<3.11"
+dependencies = [
+    "langchain>=1.0,<2.0",
+    "langgraph>=1.0,<2.0",
+    "langgraph-checkpoint-sqlite>=3.0,<4.0",
+    "pydantic>=2.12,<3.0",
+    "typing-extensions>=4.12,<5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "PyYAML>=6.0,<7.0",
+    "pytest>=8.0,<10.0",
+    "ruff>=0.12,<1.0",
+    "uvicorn[standard]>=0.35,<1.0",
+]
+
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["backend*"]
