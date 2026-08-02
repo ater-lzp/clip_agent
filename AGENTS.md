@@ -1,103 +1,110 @@
-# Project Overview
+# Clip Agent 项目协作规范
 
-本项目将已登录用户提供的主题转换为可审核、可追溯的短视频成片，编排脚本生成、两阶段人工审核、分镜规划、MiMo 语音合成、修复循环与视频合成。系统边界止于成片生成和历史记录持久化，不自动发布内容、不绕过人工审核、不在图状态中保存明文密钥。
+## 1. 项目目标
 
-# Tech Stack
+本项目是一个由 LangGraph 编排的短视频生成智能体应用。系统接收主题描述、目标时长和画面比例，经过剧本生成与人工审核、分镜生成与人工审核、配音、素材检索、字幕与时间轴对齐、预览渲染和可选 BGM 混音，最终输出可预览、导出和追溯的短视频。
 
-- Backend:  `clip_agent\.venv`、Python 3.10.9、LangChain latest、LangGraph latest
-- Frontend: Node.js v24.18.1、npm 11.16.0、Vue 3.5+、TypeScript 5.6+
-- Database: SQLite 3.45+、LangGraph SQLite Checkpointer
-- Testing & Quality: pytest 8+、Ruff 0.12+
+所有实现都应优先保证：流程可恢复、产物可追溯、人工审核可靠、音画时间轴准确、外部服务可替换，以及用户数据和凭据安全。
 
-# Project Structure
+## 2. 指令作用域与优先级
+
+- 本文件适用于整个仓库；子目录中的 `AGENTS.md` 或 `agents/*.md` 只补充其专项规则。
+- 当前用户任务的明确要求高于本文件；遇到冲突时先指出冲突，再采用风险最低且最符合用户目标的方案。
+- 修改前先阅读相关代码、配置和测试，不猜测尚未查看的实现。
+- 保留用户已有改动。不得为了方便而回滚、覆盖或格式化与当前任务无关的内容。
+- 只修改完成当前任务所需的文件；如果发现旁支问题，在交付说明中列出，不擅自扩大范围。
+
+## 3. 技术基线
+
+- 后端：Python 3.10.9、LangChain 1.x、LangGraph 1.x、Pydantic 2.x。
+- 前端：Node.js 24.18.1、npm 11.16.0、Vue 3、TypeScript。
+- 持久化：SQLite；LangGraph 使用 SQLite Checkpointer 保存工作流检查点。
+- 依赖版本以 `pyproject.toml`、`uv.lock`、`package.json` 和前端锁文件为准。不得仅以 `latest` 作为可复现的依赖版本。
+- LLM、TTS 和素材服务必须通过适配器调用；模型名、服务地址和凭据从服务端环境配置读取，不得散落在业务代码中。
+
+## 4. 按任务读取规范
+
+开始工作前，只读取与任务相关的专项文件：
+
+| 任务范围 | 必读文件 |
+| --- | --- |
+| 前端页面、状态管理、交互或前端测试 | `agents/frontend.md` |
+| 后端、LangGraph、数据库、媒体处理或后端测试 | `agents/backend.md` |
+| 新增或修改 HTTP / SSE / WebSocket 接口 | `agents/api.md`，并同时读取调用方对应规范 |
+| 跨前后端功能 | `agents/frontend.md`、`agents/backend.md`、`agents/api.md` |
+
+接口实现与 `agents/api.md` 必须在同一次变更中保持一致。若接口文档尚未定义所需契约，先补充契约，再实现调用方和服务端。
+
+## 5. 目标项目结构
+
+以下是项目的目标布局。实际新增、移动或删除顶层目录时，应同步更新本节；不要保留与仓库不符的结构说明。
 
 ```text
 clip_agent/
-├── AGENTS.md                         # 核心约束与按需阅读导航
-├── harness.yaml                      # 环境、MiMo 工具及最小权限配置
-├── pyproject.toml                    # Python 版本、运行与开发依赖
-├── PROGRESS.md                       # 实施状态与阻塞项
-├── README.md                         # 项目描述文件
-├── backend/
-│   ├── __init__.py                   # 后端包边界
-│   ├── main.py                       # 最小 ASGI 开发入口
-│   └── workflow.py                   # 可执行状态、路由与图构建实现
-├── frontend/
-│   ├── index.html                    # Vite HTML 入口
-│   ├── package.json                  # Vue 开发与构建依赖
-│   ├── tsconfig.json                 # TypeScript 严格模式配置
-│   ├── vite.config.ts                # Vue Vite 插件配置
-│   └── src/
-│       ├── App.vue                   # 根组件
-│       └── main.ts                   # Vue 应用挂载入口
-├── docs/
-│   └── architecture.md               # AgentState、路由、HITL 与中间件契约
-├── agents/
-│   ├── script_generator.md           # 脚本生成节点契约
-│   ├── human_review_script.md        # 脚本人工审核节点契约
-│   ├── storyboard_planner.md         # 分镜规划节点契约
-│   ├── human_review_storyboard.md    # 分镜人工审核节点契约
-│   ├── tts_synthesizer.md            # Xiaomi MiMo TTS 节点契约
-│   ├── video_composer.md             # 视频合成节点契约
-│   └── repair_agent.md               # 驳回修复与回审节点契约
-└── tests/
-    └── test_workflow.py              # 状态、审核中断和真实路由测试
+├── .env                  # 本地服务端环境变量；不得提交真实凭据
+├── AGENTS.md             # 全局协作与安全约束
+├── README.md             # 面向使用者的安装、运行与架构说明
+├── pyproject.toml        # Python 与后端依赖配置
+├── uv.lock               # Python 锁文件
+├── backend/              # API、工作流、领域服务和基础设施适配器
+├── frontend/             # Vue + TypeScript 客户端
+├── agents/               # 前端、后端和 API 专项规范
+└── tests/                # 跨模块或端到端测试
 ```
 
-职责分离：本文件仅保存全局约束与导航；状态、路由、提示词和测试细节分别由对应子文件维护。
+模块应按职责组织，避免把路由、LangGraph 节点、供应商 SDK 调用和媒体处理堆叠在同一个文件中。
 
-# Build & Test Commands
+## 6. 通用工程规则
+
+### 6.1 实施流程
+
+1. 明确需求、受影响模块、数据流和验收条件。
+2. 检查现有实现、接口契约、依赖和工作区改动。
+3. 采用最小且完整的改动，复用现有抽象，不创建重复实现。
+4. 为新增逻辑补充与风险相称的测试；外部 LLM、TTS、素材和渲染服务应使用 mock 或 fake。
+5. 运行受影响范围的检查和测试；无法运行时说明具体原因，不宣称已经验证。
+6. 检查 `README.md` 是否因安装方式、环境变量、命令、目录结构、接口或用户流程变化而需要更新。
+
+### 6.2 代码质量
+
+- 命名应表达领域含义，避免 `data`、`result`、`temp` 等在跨层传递中失去语义的名称。
+- 公共边界必须有明确类型；不得用无约束字典长期代替 Pydantic 模型或 TypeScript 类型。
+- 错误处理应保留原因、阶段和可重试性，并向用户返回安全、可行动的信息。
+- 时间统一以 UTC 存储，API 使用带时区的 ISO 8601；面向用户时再按本地时区展示。
+- 持久化实体使用稳定且不可猜测的 ID。所有资源访问都必须校验当前用户的所有权。
+- 不在图状态、数据库记录和 API 响应中存放大型二进制数据；仅保存受控路径、对象存储键、URL 和必要元数据。
+
+### 6.3 安全红线
+
+- 禁止在代码、提示词、图状态、日志、测试夹具、前端包或版本库中硬编码 API 密钥、令牌和用户密码。
+- 禁止使用 `eval`、`exec`、不受限动态导入，或把用户输入直接拼接为系统命令、SQL、URL 或文件路径。
+- 所有数据库查询使用参数化语句或安全 ORM；所有文件访问先做规范化并限制在专用工作目录内。
+- 日志必须脱敏。不得记录密码、完整令牌、Cookie、Authorization 头、供应商密钥、完整用户提示词中的敏感内容或媒体二进制。
+- 服务端 `.env` 是部署级配置，不是普通用户偏好存储。普通用户请求不得直接读取、回传或修改 `.env`。
+- 浏览器端不得接收供应商密钥。用户设置只保存非敏感偏好；如需在线管理部署凭据，必须另设管理员授权、审计和加密存储方案。
+- 外部 URL、上传文件和媒体元数据都视为不可信输入，必须限制协议、来源、大小、类型、时长和解析资源消耗。
+
+## 7. 文档与运行命令
+
+命令必须注明工作目录，并以仓库实际入口为准。入口尚未创建时，不得在文档中声称可运行。
 
 ```powershell
-.\.venv\Scripts\python.exe -m ensurepip --upgrade
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+# 后端（在仓库根目录；入口存在后使用）
 .\.venv\Scripts\python.exe -m uvicorn backend.main:app --reload
-npm --prefix frontend install
-npm --prefix frontend run dev
-npm --prefix frontend run build
-.\.venv\Scripts\python.exe -m pytest tests -q
-.\.venv\Scripts\python.exe -m ruff check .
+
+# 前端（在 frontend 目录）
+npm run dev
 ```
 
-# Safety & Constraints
+新增环境变量时，同时提供安全的示例名称、用途和是否必填，不填写真实值。涉及用户可见安装、配置或使用方式的变化时同步更新 `README.md`。
 
-- 禁止在代码、提示词、图状态、日志、测试夹具或版本库中硬编码 API 密钥、令牌和用户密码。
-- 禁止使用 `eval`、`exec`、不受限动态导入，或将用户输入直接拼接为系统命令、SQL 和文件路径。
-- 所有业务请求必须先通过认证与资源归属中间件；节点只能访问当前 `user_id` 的配置、历史和媒体。
-- 用户密钥必须加密存储并按引用获取；密钥值不得进入 `AgentState`、检查点或审计事件。
-- 人工审核必须使用 LangGraph `interrupt()`、持久化 SQLite checkpointer 和稳定 `thread_id`；恢复时必须复用原线程。
-- `approval_status` 仅允许 `PENDING`、`APPROVED`、`REJECTED`；`REJECTED` 必须进入 `repair_agent`，不得绕过回审。
-- 修复次数必须在开始新一轮修复前校验；达到上限后进入失败终态，禁止无限循环。
-- 节点只能读写其契约声明的状态字段；跨节点追加字段必须配置显式 reducer。
-- MiMo 调用只能使用 `harness.yaml` 中的模型、Voice ID、域名和输出格式白名单。
-- 文件与网络访问遵循最小权限；日志只记录脱敏元数据，严禁跨用户路径和私网探测。
+## 8. 完成标准
 
-# Navigation Map
+只有同时满足以下条件，任务才算完成：
 
-| Path | Core purpose |
-| --- | --- |
-| `harness.yaml` | 环境变量、MiMo 模型与音色、文件和网络权限。 |
-| `pyproject.toml` | Python 3.10.9 及运行、测试、检查依赖。 |
-| `PROGRESS.md` | 读取任务状态、完成标准和阻塞项。 |
-| `backend/__init__.py` | 声明后端 Python 包边界。 |
-| `backend/main.py` | 后端开发服务器入口与健康检查。 |
-| `backend/workflow.py` | 测试和运行时共用的真实状态、路由与图构建实现。 |
-| `frontend/index.html` | Vite 页面入口。 |
-| `frontend/package.json` | Vue3 前端开发与构建命令。 |
-| `frontend/tsconfig.json` | TypeScript 编译与严格类型设置。 |
-| `frontend/vite.config.ts` | Vite 和 Vue 插件配置。 |
-| `frontend/src/App.vue` | 前端根组件。 |
-| `frontend/src/main.ts` | Vue 应用启动入口。 |
-| `docs/architecture.md` | 修改 AgentState、LangGraph 路由、HITL 或中间件前必读。 |
-| `agents/script_generator.md` | 脚本生成的字段、提示词和约束。 |
-| `agents/human_review_script.md` | 脚本审核中断、审批结果和反馈契约。 |
-| `agents/storyboard_planner.md` | 分镜生成的字段、提示词和约束。 |
-| `agents/human_review_storyboard.md` | 分镜审核中断、审批结果和反馈契约。 |
-| `agents/tts_synthesizer.md` | Xiaomi MiMo Voice ID 选择与音频合成契约。 |
-| `agents/video_composer.md` | 已审核分镜、音频和素材的成片合成契约。 |
-| `agents/repair_agent.md` | 按审核目标修复并返回对应审核节点的契约。 |
-| `tests/test_workflow.py` | 导入真实路由实现，验证通过、驳回、恢复和上限行为。 |
-
-# 重要提醒
-- 每一次修改都需要检查是否需要修改readme.md文件，如需修改则修改
+- 行为符合需求，关键失败路径有处理，且没有破坏已有流程。
+- 前后端契约、类型、状态枚举和字段命名一致。
+- 人工审核、重试、恢复和并行汇合不会重复产生不可控副作用。
+- 新增或变更逻辑有必要的测试，已执行的检查结果明确。
+- 无密钥泄露、越权访问、路径穿越、命令注入或不受控远程资源访问风险。
+- 已检查并按需更新 `agents/api.md`、`README.md` 和本文件中的项目结构。
