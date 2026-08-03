@@ -3,11 +3,16 @@ name = "clip-agent"
 version = "0.1.0"
 requires-python = ">=3.10.9,<3.11"
 dependencies = [
+    "fastapi>=0.115,<1.0",
+    "httpx>=0.28,<1.0",
+    "imageio-ffmpeg>=0.6,<1.0",
     "langchain>=1.0,<2.0",
     "langgraph>=1.0,<2.0",
     "langgraph-checkpoint-sqlite>=3.0,<4.0",
     "pydantic>=2.12,<3.0",
+    "python-dotenv>=1.1,<2.0",
     "typing-extensions>=4.12,<5.0",
+    "uvicorn[standard]>=0.35,<1.0",
 ]
 
 [project.optional-dependencies]
@@ -15,7 +20,6 @@ dev = [
     "PyYAML>=6.0,<7.0",
     "pytest>=8.0,<10.0",
     "ruff>=0.12,<1.0",
-    "uvicorn[standard]>=0.35,<1.0",
 ]
 
 [build-system]
@@ -24,3 +28,15 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["backend*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["B008", "E501", "UP007"]
