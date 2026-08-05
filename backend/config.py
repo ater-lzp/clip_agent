@@ -46,7 +46,7 @@ class Settings(BaseModel):
     pexels_api_key: str = ""
     pexels_max_queries: int = Field(default=6, ge=1, le=6)
     pexels_per_page: int = Field(default=15, ge=1, le=80)
-    bgm_library_dir: Path | None = None
+    bgm_library_dir: Path = PROJECT_ROOT / "backend" / "bgms"
 
     @field_validator("provider_mode")
     @classmethod
@@ -89,7 +89,7 @@ class Settings(BaseModel):
         def csv(name: str, default: str) -> list[str]:
             return os.getenv(name, default).split(",")
 
-        bgm_value = os.getenv("BGM_LIBRARY_DIR", "").strip()
+        bgm_value = os.getenv("BGM_LIBRARY_DIR", "").strip() or "./backend/bgms"
         return cls(
             environment=os.getenv("CLIP_ENV", "development"),
             host=os.getenv("CLIP_HOST", "127.0.0.1"),
@@ -121,13 +121,14 @@ class Settings(BaseModel):
             pexels_api_key=os.getenv("PEXELS_API_KEY", ""),
             pexels_max_queries=int(os.getenv("PEXELS_MAX_QUERIES", "6")),
             pexels_per_page=int(os.getenv("PEXELS_PER_PAGE", "15")),
-            bgm_library_dir=_path_from_env(bgm_value) if bgm_value else None,
+            bgm_library_dir=_path_from_env(bgm_value),
         )
 
     def ensure_directories(self) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         self.media_root.mkdir(parents=True, exist_ok=True)
+        self.bgm_library_dir.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache(maxsize=1)

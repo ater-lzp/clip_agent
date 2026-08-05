@@ -3,6 +3,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from backend.db.repository import Repository
 
 
@@ -65,5 +67,21 @@ def test_voice_and_provider_migration_preserves_existing_tasks(tmp_path: Path) -
         task = connection.execute(
             "SELECT voice_id, provider_mode FROM video_tasks WHERE id = ?", ("task-1",)
         ).fetchone()
+        account = connection.execute(
+            "SELECT generation_quota,generations_used,role FROM users WHERE id=?", ("user-1",)
+        ).fetchone()
+        engagement_tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('post_likes','user_follows')"
+            )
+        }
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO user_follows(follower_id,followee_id,created_at) VALUES (?,?,?)",
+                ("user-1", "user-1", "2026-08-03T00:00:00Z"),
+            )
     assert settings == ("mimo_default",)
     assert task == ("mimo_default", "fake")
+    assert account == (5, 1, "user")
+    assert engagement_tables == {"post_likes", "user_follows"}

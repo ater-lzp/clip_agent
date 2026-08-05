@@ -48,6 +48,7 @@ clip_agent/
 ├── uv.lock               # Python 锁文件
 ├── backend/              # API、工作流、领域服务和基础设施适配器
 ├── frontend/             # Vue + TypeScript 客户端
+├── admin/                # 独立 Vue + TypeScript 管理员控制台
 ├── agents/               # 前端、后端和 API 专项规范
 └── tests/                # 跨模块或端到端测试
 ```

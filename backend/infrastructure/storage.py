@@ -42,6 +42,29 @@ class ArtifactStore:
             task_dir.mkdir(parents=True, exist_ok=True)
         return task_dir
 
+    def profile_path(self, user_id: str, filename: str, create: bool = True) -> Path:
+        safe_user = self._uuid_component(user_id)
+        if not re_safe_component(filename):
+            raise UnsafePathError("profile filename is unsafe")
+        user_dir = self.media_root / safe_user
+        profile_dir = user_dir / "profile"
+        for candidate in (user_dir, profile_dir):
+            if (candidate.exists() or candidate.is_symlink()) and _is_link_or_reparse(candidate):
+                raise UnsafePathError("profile directory contains a link or reparse point")
+        if create:
+            profile_dir.mkdir(parents=True, exist_ok=True)
+        profile_dir = profile_dir.resolve()
+        if os.path.commonpath([str(self.media_root), str(profile_dir)]) != str(self.media_root):
+            raise UnsafePathError("profile directory escapes media root")
+        return profile_dir / filename
+
+    def resolve_profile_path(self, user_id: str, relative_path: str) -> Path:
+        expected = self.profile_path(user_id, "avatar.jpg", create=False).resolve()
+        candidate = (self.media_root / Path(relative_path)).resolve(strict=True)
+        if candidate != expected or not candidate.is_file():
+            raise UnsafePathError("profile artifact is not registered")
+        return candidate
+
     def artifact_path(
         self, user_id: str, task_id: str, category: str, filename: str, create: bool = True
     ) -> Path:

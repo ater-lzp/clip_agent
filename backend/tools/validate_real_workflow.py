@@ -27,6 +27,7 @@ from backend.domain.models import (
     TimelineItem,
     VideoArtifact,
 )
+from backend.workflow.graph import _spoken_narration_text
 
 
 def _timestamp_ms(value: str) -> int:
@@ -278,7 +279,9 @@ def main() -> None:
             if previous[1] != current[0]:
                 raise RuntimeError("SRT contains a gap or overlap")
         actual_caption = "".join(item[2] for item in cues)
-        expected_caption = "".join(segment.narration for segment in script.segments)
+        expected_caption = "".join(
+            _spoken_narration_text(segment.narration) for segment in script.segments
+        )
         if actual_caption != expected_caption:
             raise RuntimeError("SRT text does not exactly cover the generated narration")
 

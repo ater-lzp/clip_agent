@@ -4,7 +4,6 @@ import base64
 import hashlib
 import json
 import math
-import random
 import re
 import struct
 import subprocess
@@ -24,6 +23,7 @@ from backend.domain.models import (
     AspectRatio,
     AudioSegment,
     BgmArtifact,
+    BgmSelection,
     MaterialAsset,
     MimoVoiceId,
     ScriptArtifact,
@@ -34,6 +34,7 @@ from backend.domain.models import (
     TimelineItem,
     VideoArtifact,
 )
+from backend.infrastructure.bgm_media import BgmCatalog
 from backend.infrastructure.security import validate_https_url
 from backend.infrastructure.storage import ArtifactStore
 
@@ -95,6 +96,14 @@ class MaterialAdapter(Protocol):
 class RendererAdapter(Protocol):
     name: str
 
+    def retime_audio(
+        self,
+        segment: AudioSegment,
+        target_duration_ms: int,
+        output_path: Path,
+        store: ArtifactStore,
+    ) -> AudioSegment: ...
+
     def render_preview(
         self,
         *,
@@ -107,7 +116,13 @@ class RendererAdapter(Protocol):
         store: ArtifactStore,
     ) -> VideoArtifact: ...
 
-    def fetch_bgm(self, query: str, duration_ms: int, output_path: Path) -> BgmArtifact: ...
+    def fetch_bgm(
+        self,
+        selection: BgmSelection,
+        duration_ms: int,
+        output_path: Path,
+        store: ArtifactStore,
+    ) -> BgmArtifact: ...
 
     def mix_bgm(
         self,
@@ -120,7 +135,8 @@ class RendererAdapter(Protocol):
 
 
 TModel = TypeVar("TModel", bound=BaseModel)
-MIMO_CALIBRATED_CHARS_PER_SECOND = 3.75
+MIMO_CALIBRATED_CHARS_PER_SECOND = 3.15
+SCRIPT_DURATION_REWRITE_LIMIT = 2
 
 
 def _header_idempotency_key(value: str) -> str:
@@ -297,7 +313,7 @@ SCRIPT_PROMPT_TEMPLATE = """# Role
 
 # Workflow
 1. 接收用户输入的主题、时长、风格等参数。
-2. 根据“MiMo 实测口播基准（3.75字/秒）”计算全片总字数预算。
+2. 根据“MiMo 实测口播基准（3.15字/秒）”计算全片总字数预算。
 3. 规划场景数量与各场景情绪、语速档位，撰写口播文案。
 4. 在口播文案中嵌入语音风格标签，并在emotion字段中提供细致的语气描述。
 5. 逐段计算 `narration_char_count` 和 `estimated_duration`，校验总字数与总时长。
@@ -307,14 +323,15 @@ SCRIPT_PROMPT_TEMPLATE = """# Role
 - 视频主题：__TOPIC__
 - 目标总时长：约 __DURATION__ 秒
 - 全片 narration 有效字符预算：目标 __TARGET_CHARS__ 字，必须控制在 __MIN_CHARS__ ~ __MAX_CHARS__ 字
+- 建议场景数：__MIN_SCENES__ ~ __MAX_SCENES__ 个；不得用少量短场景提前结束
 - 视频风格：__STYLE__
 - 视频画幅：__ORIENTATION__ （对应比例：__ASPECT_WORD__）
 - 修改反馈：__FEEDBACK__
 
 # Core Calculation Rules
 ## 1. 字数预算与校准（最高优先级）
-- 全片口播基准语速：3.75个有效字符/秒。
-- 目标总字数 = `__DURATION__ × 3.75`。
+- 全片口播基准语速：3.15个实际朗读字符/秒（已包含 MiMo 情绪、停顿和分段开销的实测校准）。
+- 目标总字数 = `__DURATION__ × 3.15`。
 - 输出前必须逐段重新计数，确保所有 scene 的 `narration_char_count` 之和处于 `__MIN_CHARS__` ~ `__MAX_CHARS__` 之间，目标值为 `__TARGET_CHARS__`。
 - 字数不足时补充有信息量的口语化内容；超出时精简。不得为了压缩字数而滥用快速档。
 
@@ -378,7 +395,7 @@ SCRIPT_PROMPT_TEMPLATE = """# Role
 }
 
 # Constraints
-- `narration_char_count` 统计规则：仅计算中文、英文和数字字符，绝对不含标点及空白。
+- `narration_char_count` 统计规则：仅计算实际会朗读的中文、英文和数字字符，绝对不含标点、空白及 narration 开头的 `(风格)` / `（风格）` 控制标签。
 - `scene_id` 从 1 连续递增。
 - 输出前最后检查：Σ `narration_char_count` 必须处于 `__MIN_CHARS__` ~ `__MAX_CHARS__`。
 - 仅输出合法 JSON 对象，绝对禁止输出任何非 JSON 格式的文字。
@@ -486,7 +503,8 @@ def _completion_endpoint(base_url: str, suffix: str) -> str:
 
 
 def _spoken_char_count(text: str) -> int:
-    return len(re.findall(r"[\u4e00-\u9fffA-Za-z0-9]", text))
+    spoken_text = re.sub(r"^(?:[（(][^）)]{1,40}[）)]\s*)+", "", text.strip())
+    return len(re.findall(r"[\u4e00-\u9fffA-Za-z0-9]", spoken_text))
 
 
 def _emotion_text(value: str | dict[str, Any]) -> str:
@@ -516,6 +534,8 @@ def _script_prompt(
     target_chars = max(1, round(target_duration_seconds * MIMO_CALIBRATED_CHARS_PER_SECOND))
     minimum_chars = max(1, round(target_chars * 0.97))
     maximum_chars = max(minimum_chars, round(target_chars * 1.03))
+    minimum_scenes = max(1, math.ceil(target_duration_seconds / 8))
+    maximum_scenes = min(50, max(minimum_scenes, math.ceil(target_duration_seconds / 4)))
     aspect_word = "portrait" if aspect_ratio == AspectRatio.PORTRAIT else "landscape"
     orientation = (
         "portrait（竖屏 9:16）"
@@ -531,6 +551,8 @@ def _script_prompt(
         .replace("__TARGET_CHARS__", str(target_chars))
         .replace("__MIN_CHARS__", str(minimum_chars))
         .replace("__MAX_CHARS__", str(maximum_chars))
+        .replace("__MIN_SCENES__", str(minimum_scenes))
+        .replace("__MAX_SCENES__", str(maximum_scenes))
         .replace("__STYLE__", "专业、自然、有节奏感，适合短视频口播")
         .replace("__ORIENTATION__", orientation)
         .replace("__ASPECT_WORD__", aspect_word)
@@ -656,16 +678,23 @@ class OpenAICompatibleLlmAdapter:
             idempotency_key,
         )
         target_chars = max(1, round(target_duration_seconds * MIMO_CALIBRATED_CHARS_PER_SECOND))
-        actual_total_chars = sum(
-            _spoken_char_count(scene.narration) for scene in provider_output.scenes
-        )
-        if not round(target_chars * 0.9) <= actual_total_chars <= round(target_chars * 1.1):
+        for rewrite_index in range(SCRIPT_DURATION_REWRITE_LIMIT):
+            actual_total_chars = sum(
+                _spoken_char_count(scene.narration) for scene in provider_output.scenes
+            )
+            if round(target_chars * 0.97) <= actual_total_chars <= round(target_chars * 1.03):
+                break
+            minimum_scenes = max(1, math.ceil(target_duration_seconds / 8))
+            maximum_scenes = min(50, max(minimum_scenes, math.ceil(target_duration_seconds / 4)))
+            per_scene_target = max(1, round(target_chars / max(minimum_scenes, 1)))
             duration_feedback = (
-                f"上一版实际只有 {actual_total_chars} 个有效口播字符，"
-                f"与 {target_duration_seconds} 秒所需的 {target_chars} 字明显不符。"
+                f"上一版第 {rewrite_index + 1} 次字数校验失败：实际为 {actual_total_chars} 个"
+                f"会被朗读的有效字符，与 {target_duration_seconds} 秒所需的 {target_chars} 字不符。"
                 f"必须完整重写，确保所有 narration 的实际有效字符总数为 "
                 f"{round(target_chars * 0.97)}~{round(target_chars * 1.03)} 字；"
-                "不要复用上一版的短文案，不要只修改 total_duration 数字。"
+                f"使用 {minimum_scenes}~{maximum_scenes} 个场景，每个场景平均约 "
+                f"{per_scene_target} 字。不要复用上一版的文案，不要只修改计数字段或 "
+                "total_duration 数字；逐段实际计数后再输出。"
             )
             combined_feedback = (
                 f"{feedback.strip()}；{duration_feedback}" if feedback else duration_feedback
@@ -679,7 +708,7 @@ class OpenAICompatibleLlmAdapter:
                 ),
                 "上一版口播字数不足或过多。严格按总字数预算重写，只返回 JSON。",
                 DifyScriptOutput,
-                f"{idempotency_key}:duration-rewrite",
+                f"{idempotency_key}:duration-rewrite:{rewrite_index + 1}",
             )
         ordered_scenes = sorted(provider_output.scenes, key=lambda item: item.scene_id)
         if [item.scene_id for item in ordered_scenes] != list(range(1, len(ordered_scenes) + 1)):
@@ -1354,7 +1383,60 @@ class FfmpegRenderer:
     def __init__(self, settings: Settings) -> None:
         self.ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
         self.bgm_library_dir = settings.bgm_library_dir
+        self.bgm_catalog = BgmCatalog(settings.bgm_library_dir)
         self.media_root = settings.media_root
+
+    def retime_audio(
+        self,
+        segment: AudioSegment,
+        target_duration_ms: int,
+        output_path: Path,
+        store: ArtifactStore,
+    ) -> AudioSegment:
+        if target_duration_ms <= 0:
+            raise ProviderError("配音目标时长无效", retryable=False)
+        source_path = store.media_root / segment.relative_path
+        if not source_path.is_file():
+            raise ProviderError("待校准的配音片段不存在", retryable=True)
+        tempo = segment.duration_ms / target_duration_ms
+        tempo_factors: list[float] = []
+        while tempo > 2.0:
+            tempo_factors.append(2.0)
+            tempo /= 2.0
+        while tempo < 0.5:
+            tempo_factors.append(0.5)
+            tempo /= 0.5
+        tempo_factors.append(tempo)
+        tempo_filter = ",".join(f"atempo={factor:.8f}" for factor in tempo_factors)
+        duration_seconds = target_duration_ms / 1000
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        _run_ffmpeg(
+            [
+                self.ffmpeg,
+                "-y",
+                "-i",
+                str(source_path),
+                "-filter:a",
+                f"{tempo_filter},apad,atrim=duration={duration_seconds:.6f}",
+                "-ac",
+                "1",
+                "-ar",
+                str(segment.sample_rate),
+                "-c:a",
+                "pcm_s16le",
+                str(output_path),
+            ],
+            timeout=120,
+        )
+        duration_ms, sample_rate = _wave_duration_ms(output_path)
+        return segment.model_copy(
+            update={
+                "relative_path": store.relative_path(output_path),
+                "duration_ms": duration_ms,
+                "sample_rate": sample_rate,
+                "checksum": store.checksum(output_path),
+            }
+        )
 
     def render_preview(
         self,
@@ -1515,50 +1597,46 @@ class FfmpegRenderer:
             has_bgm=False,
         )
 
-    def fetch_bgm(self, query: str, duration_ms: int, output_path: Path) -> BgmArtifact:
-        source = "deterministic generated instrumental"
-        candidates: list[Path] = []
-        if self.bgm_library_dir and self.bgm_library_dir.is_dir():
-            candidates = sorted(
-                path
-                for path in self.bgm_library_dir.iterdir()
-                if path.is_file() and path.suffix.lower() in {".wav", ".mp3", ".m4a"}
-            )
-        if candidates:
-            query_terms = {term.lower() for term in query.split()}
-            selected = max(
-                candidates,
-                key=lambda path: len(query_terms & set(path.stem.lower().split())),
-            )
-            _run_ffmpeg(
-                [
-                    self.ffmpeg,
-                    "-y",
-                    "-stream_loop",
-                    "-1",
-                    "-i",
-                    str(selected),
-                    "-t",
-                    f"{duration_ms / 1000:.3f}",
-                    "-ac",
-                    "2",
-                    "-ar",
-                    "44100",
-                    str(output_path),
-                ]
-            )
-            source = f"local licensed library: {selected.name}"
+    def fetch_bgm(
+        self,
+        selection: BgmSelection,
+        duration_ms: int,
+        output_path: Path,
+        store: ArtifactStore,
+    ) -> BgmArtifact:
+        if selection.source == "library":
+            track = self.bgm_catalog.resolve(selection.track_id)
+            selected = track.path
         else:
-            seed = int.from_bytes(query.encode("utf-8")[:8].ljust(8, b"\0"), "big")
-            frequency = 110 + random.Random(seed).randint(0, 90)
-            _write_wave(output_path, duration_ms / 1000, frequency, 0.08)
+            selected = store.resolve_registered_path(
+                output_path.parents[1].parent.name,
+                output_path.parents[1].name,
+                selection.uploaded_relative_path or "",
+            )
+        _run_ffmpeg(
+            [
+                self.ffmpeg,
+                "-y",
+                "-stream_loop",
+                "-1",
+                "-i",
+                str(selected),
+                "-t",
+                f"{duration_ms / 1000:.3f}",
+                "-ac",
+                "2",
+                "-ar",
+                "44100",
+                str(output_path),
+            ]
+        )
         checksum = _checksum(output_path)
         relative = output_path.resolve().relative_to(self.media_root.resolve()).as_posix()
         return BgmArtifact(
             relative_path=relative,
             duration_ms=duration_ms,
             checksum=checksum,
-            source=source,
+            source=f"{selection.source}:{selection.name}",
         )
 
     def mix_bgm(

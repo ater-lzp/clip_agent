@@ -14,6 +14,9 @@ from backend.infrastructure.security import token_hash
 class AuthContext:
     user_id: str
     email: str
+    nickname: str | None
+    avatar_relative_path: str | None
+    role: str
     user_created_at: str
     session_hash: str
     csrf_hash: str
@@ -36,6 +39,9 @@ def require_auth(
     return AuthContext(
         user_id=session["user_id"],
         email=session["email"],
+        nickname=session["nickname"],
+        avatar_relative_path=session["avatar_relative_path"],
+        role=session["role"],
         user_created_at=session["user_created_at"],
         session_hash=session_hash,
         csrf_hash=session["csrf_hash"],
@@ -54,4 +60,16 @@ def require_csrf(
         or not hmac.compare_digest(token_hash(csrf_header), context.csrf_hash)
     ):
         raise ApiError(403, "CSRF_FAILED", "安全校验失败，请刷新页面后重试")
+    return context
+
+
+def require_admin(context: AuthContext = Depends(require_auth)) -> AuthContext:
+    if context.role != "admin":
+        raise ApiError(403, "ADMIN_REQUIRED", "需要管理员权限")
+    return context
+
+
+def require_admin_csrf(context: AuthContext = Depends(require_csrf)) -> AuthContext:
+    if context.role != "admin":
+        raise ApiError(403, "ADMIN_REQUIRED", "需要管理员权限")
     return context

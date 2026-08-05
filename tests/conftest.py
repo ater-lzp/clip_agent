@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import wave
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -13,6 +14,13 @@ from tests.fakes import FastRenderer
 
 @pytest.fixture
 def test_settings(tmp_path: Path) -> Settings:
+    bgm_library = tmp_path / "bgms"
+    bgm_library.mkdir()
+    with wave.open(str(bgm_library / "test-calm.wav"), "wb") as audio:
+        audio.setnchannels(2)
+        audio.setsampwidth(2)
+        audio.setframerate(44_100)
+        audio.writeframes(b"\0\0\0\0" * 44_100)
     return Settings(
         environment="test",
         database_path=tmp_path / "application.sqlite3",
@@ -21,6 +29,7 @@ def test_settings(tmp_path: Path) -> Settings:
         provider_mode="fake",
         allowed_origins=["http://testserver"],
         allowed_hosts=["testserver", "localhost"],
+        bgm_library_dir=bgm_library,
     )
 
 

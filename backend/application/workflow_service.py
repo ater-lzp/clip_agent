@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
+import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+import imageio_ffmpeg
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 from pydantic import ValidationError
@@ -14,6 +17,7 @@ from backend.config import Settings
 from backend.db.repository import Repository, TaskNotFoundError
 from backend.domain.models import TaskStatus
 from backend.infrastructure.adapters import ProviderError, build_adapters
+from backend.infrastructure.bgm_media import BgmCatalog, InvalidBgmError
 from backend.infrastructure.storage import ArtifactStore
 from backend.workflow.graph import WorkflowNodes, WorkflowValidationError, build_workflow
 
@@ -26,6 +30,7 @@ class WorkflowService:
         self.settings = settings
         self.repository = repository
         self.store = ArtifactStore(settings.media_root)
+        self.bgm_catalog = BgmCatalog(settings.bgm_library_dir)
         self.checkpoint_connection = sqlite3.connect(
             settings.checkpoint_path, check_same_thread=False
         )
@@ -45,6 +50,69 @@ class WorkflowService:
         self.running: set[str] = set()
         self.running_lock = threading.Lock()
         self.task_locks: dict[str, threading.Lock] = {}
+        self.cover_locks: dict[str, threading.Lock] = {}
+
+    @staticmethod
+    def uploaded_track_id(task_id: str, preview_version: int) -> str:
+        return f"upload:{task_id}:{preview_version}"
+
+    def resolve_bgm_selection(
+        self, user_id: str, task_id: str, preview_version: int, track_id: str
+    ) -> dict[str, Any]:
+        if track_id.startswith("library:"):
+            track = self.bgm_catalog.resolve(track_id)
+            return {"track_id": track.id, "name": track.name, "source": "library"}
+        task = self.repository.get_task(user_id, task_id)
+        expected_id = self.uploaded_track_id(task_id, preview_version)
+        relative_path = task.get("uploaded_bgm_relative_path")
+        if track_id != expected_id or not relative_path:
+            raise InvalidBgmError("uploaded track does not exist")
+        path = self.store.resolve_registered_path(user_id, task_id, relative_path)
+        if self.store.checksum(path) != task.get("uploaded_bgm_checksum"):
+            raise InvalidBgmError("uploaded track checksum mismatch")
+        return {
+            "track_id": expected_id,
+            "name": task.get("uploaded_bgm_name") or "已上传音乐",
+            "source": "upload",
+            "uploaded_relative_path": relative_path,
+        }
+
+    def ensure_cover(self, user_id: str, task_id: str, video_path: str) -> str:
+        source = self.store.resolve_registered_path(user_id, task_id, video_path)
+        destination = self.store.artifact_path(user_id, task_id, "video", "cover.jpg")
+        lock = self.cover_locks.setdefault(task_id, threading.Lock())
+        with lock:
+            if destination.is_file() and destination.stat().st_size > 0:
+                return self.store.relative_path(destination)
+            temporary = destination.with_name("cover.pending.jpg")
+            try:
+                subprocess.run(
+                    [
+                        imageio_ffmpeg.get_ffmpeg_exe(),
+                        "-y",
+                        "-i",
+                        str(source),
+                        "-frames:v",
+                        "1",
+                        "-vf",
+                        "scale=640:-2",
+                        "-q:v",
+                        "3",
+                        str(temporary),
+                    ],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    timeout=60,
+                    shell=False,
+                )
+                if not temporary.is_file() or temporary.stat().st_size == 0:
+                    raise OSError("cover extraction produced no file")
+                os.replace(temporary, destination)
+                return self.store.relative_path(destination)
+            finally:
+                if temporary.exists():
+                    temporary.unlink()
 
     def submit(self, task_id: str) -> bool:
         with self.running_lock:

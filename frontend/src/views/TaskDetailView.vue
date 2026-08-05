@@ -7,6 +7,7 @@ import BgmDecisionPanel from '../components/BgmDecisionPanel.vue'
 import ReviewPanel from '../components/ReviewPanel.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import TaskProgress from '../components/TaskProgress.vue'
+import AdSlot from '../components/AdSlot.vue'
 import type { PendingReview, TaskDetail } from '../types/domain'
 import { formatDate, formatDuration } from '../utils/format'
 
@@ -29,6 +30,13 @@ const bgmReview = computed<Extract<PendingReview, { kind: 'bgm' }> | null>(() =>
   return review?.kind === 'bgm' ? review : null
 })
 const videoClass = computed(() => (task.value?.aspect_ratio === '9:16' ? 'video-portrait' : 'video-landscape'))
+const previewSource = computed(() => {
+  if (!task.value?.preview_url) return ''
+  const separator = task.value.preview_url.includes('?') ? '&' : '?'
+  return tasksApi.previewUrl(
+    `${task.value.preview_url}${separator}version=${encodeURIComponent(task.value.updated_at)}`,
+  )
+})
 
 function shouldPoll(detail: TaskDetail): boolean {
   return !['completed', 'failed', 'awaiting_script_review', 'awaiting_storyboard_review', 'awaiting_bgm_decision'].includes(detail.status)
@@ -75,7 +83,7 @@ async function review(payload: { action: 'approve' | 'reject'; feedback: string 
   }
 }
 
-async function decideBgm(payload: { action: 'no_add' | 'add'; volume: number | null }): Promise<void> {
+async function decideBgm(payload: { action: 'no_add' | 'add'; volume: number | null; track_id: string | null }): Promise<void> {
   if (!bgmReview.value || actionBusy.value) return
   actionBusy.value = true
   try {
@@ -83,6 +91,7 @@ async function decideBgm(payload: { action: 'no_add' | 'add'; volume: number | n
       version: bgmReview.value.version,
       action: payload.action,
       volume: payload.volume,
+      track_id: payload.track_id,
     })
     notice.value = payload.action === 'add' ? '正在裁剪并混合 BGM' : '已选择保留无 BGM 版本'
     managePolling()
@@ -102,6 +111,22 @@ async function retryTask(): Promise<void> {
     managePolling()
   } catch (error) {
     errorMessage.value = error instanceof ApiError ? error.message : '重试失败'
+  } finally {
+    actionBusy.value = false
+  }
+}
+
+async function duplicateTask(): Promise<void> {
+  if (!task.value || actionBusy.value) return
+  if (!window.confirm(`基于“${task.value.topic}”再次创作？将沿用时长、比例与音色创建一个新任务。`)) return
+  actionBusy.value = true
+  try {
+    const idempotencyKey = crypto.randomUUID()
+    const created = await tasksApi.duplicate(task.value.id, idempotencyKey)
+    notice.value = '已创建新任务，正在启动生成'
+    await router.push(`/tasks/${created.id}`)
+  } catch (error) {
+    errorMessage.value = error instanceof ApiError ? error.message : '再次创作失败'
   } finally {
     actionBusy.value = false
   }
@@ -155,11 +180,14 @@ onBeforeUnmount(() => {
         </div>
         <div class="heading-actions">
           <button v-if="task.export_ready" class="button primary" :disabled="actionBusy" @click="download">导出视频</button>
+          <RouterLink v-if="task.status === 'completed'" class="button secondary" :to="{ path: '/community', query: { taskId: task.id } }">发布到社区</RouterLink>
+          <button v-if="task.status === 'completed'" class="button ghost" :disabled="actionBusy" @click="duplicateTask">再次创作</button>
           <button class="button ghost danger-text" :disabled="actionBusy" @click="deleteTask">删除</button>
         </div>
       </div>
 
       <TaskProgress :progress="task.progress" :failed="task.status === 'failed'" />
+      <AdSlot slot="task_detail" />
       <p v-if="task.provider_mode === 'fake'" class="form-error floating-error" role="alert">此任务使用 fake 测试适配器，没有发起外部 LLM、MiMo 或 Pexels 请求。</p>
       <p v-if="notice" class="notice" role="status">{{ notice }}</p>
       <p v-if="errorMessage" class="form-error floating-error" role="alert">{{ errorMessage }}</p>
@@ -174,12 +202,12 @@ onBeforeUnmount(() => {
       <section v-if="task.preview_url" class="panel preview-panel">
         <div class="section-heading"><div><p class="eyebrow">Preview</p><h2>{{ task.status === 'completed' ? '视频成片' : '无 BGM 预览' }}</h2></div><span v-if="task.final_duration_seconds">{{ formatDuration(task.final_duration_seconds) }}</span></div>
         <div class="video-stage" :class="videoClass">
-          <video controls preload="metadata" :src="tasksApi.previewUrl(task.preview_url)">你的浏览器不支持视频播放。</video>
+          <video :key="previewSource" controls preload="metadata" :src="previewSource">你的浏览器不支持视频播放。</video>
         </div>
         <p v-if="task.status !== 'completed'" class="preview-note">这是不含背景音乐的预览。口播、画面和字幕已按真实音频时长对齐。</p>
       </section>
 
-      <BgmDecisionPanel v-if="bgmReview" :review="bgmReview" :busy="actionBusy" @decide="decideBgm" />
+      <BgmDecisionPanel v-if="bgmReview" :task-id="task.id" :review="bgmReview" :busy="actionBusy" @decide="decideBgm" />
 
       <section v-if="!task.pending_review && !task.preview_url && task.status !== 'failed'" class="panel working-panel" aria-live="polite">
         <span class="spinner"></span><div><h2>{{ task.progress.current_step }}</h2><p>任务在服务端运行。你可以安全离开或刷新页面，检查点会保留当前进度。</p></div>

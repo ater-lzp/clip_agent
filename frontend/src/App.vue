@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
 import { useSession } from './composables/useSession'
+import ThemeToggle from './components/ThemeToggle.vue'
+import { absoluteApiUrl } from './api/client'
 
 const session = useSession()
 const router = useRouter()
@@ -21,10 +23,14 @@ async function logout(): Promise<void> {
       <nav aria-label="主导航">
         <RouterLink to="/tasks">历史</RouterLink>
         <RouterLink to="/tasks/new">新建视频</RouterLink>
+        <RouterLink to="/community">社区</RouterLink>
+        <RouterLink to="/account">充值/会员</RouterLink>
         <RouterLink to="/settings">设置</RouterLink>
       </nav>
       <div class="account">
-        <span :title="session.user.value?.email">{{ session.user.value?.email }}</span>
+        <ThemeToggle />
+        <img v-if="session.user.value?.avatar_url" class="nav-avatar" :src="absoluteApiUrl(session.user.value.avatar_url)" alt="账户头像" />
+        <span :title="session.user.value?.email">{{ session.user.value?.nickname || session.user.value?.email }}</span>
         <button class="text-button" type="button" @click="logout">退出</button>
       </div>
     </header>
@@ -33,4 +39,3 @@ async function logout(): Promise<void> {
     </main>
   </div>
 </template>
-

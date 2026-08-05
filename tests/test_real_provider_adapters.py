@@ -13,11 +13,13 @@ import pytest
 from backend.config import Settings
 from backend.domain.models import (
     AspectRatio,
+    AudioSegment,
     MimoVoiceId,
     ScriptSegment,
     StoryboardShot,
 )
 from backend.infrastructure.adapters import (
+    FfmpegRenderer,
     MimoTtsAdapter,
     OpenAICompatibleLlmAdapter,
     PexelsAdapter,
@@ -25,6 +27,11 @@ from backend.infrastructure.adapters import (
     _write_wave,
 )
 from backend.infrastructure.storage import ArtifactStore
+from backend.workflow.graph import (
+    _narration_char_count,
+    _split_subtitle,
+    _spoken_narration_text,
+)
 
 
 def real_settings(tmp_path: Path) -> Settings:
@@ -48,9 +55,7 @@ def real_settings(tmp_path: Path) -> Settings:
 
 def test_real_llm_adapter_sends_two_structured_requests(tmp_path: Path) -> None:
     requests: list[httpx.Request] = []
-    narration = (
-        "海洋维系着地球生命系统，也调节气候、提供氧气，并承载无数生物的共同家园，需要共同守护。"
-    )
+    narration = "海洋维系地球生命，也调节气候、提供氧气，承载无数生物的共同家园，一起守护。"
     script = {
         "title": "海洋生态",
         "platform": "抖音",
@@ -62,7 +67,7 @@ def test_real_llm_adapter_sends_two_structured_requests(tmp_path: Path) -> None:
                 "scene_id": 1,
                 "location": "海边 / 外 / 日间",
                 "narration": narration,
-                "narration_char_count": 38,
+                "narration_char_count": 32,
                 "visual_hint": "海浪与海洋生物的宽景",
                 "emotion": "语气沉稳清晰，语速中等",
                 "audio_cue": "轻微海浪环境音",
@@ -124,9 +129,9 @@ def test_real_llm_adapter_sends_two_structured_requests(tmp_path: Path) -> None:
     second_payload = json.loads(requests[1].content)
     assert first_payload["response_format"] == {"type": "json_object"}
     assert first_payload["thinking"] == {"type": "disabled"}
-    assert "时长计算规则（核心）" in first_payload["messages"][0]["content"]
-    assert "目标 38 字" in first_payload["messages"][0]["content"]
-    assert "37 ~ 39 字" in first_payload["messages"][0]["content"]
+    assert "narration_char_count" in first_payload["messages"][0]["content"]
+    assert "目标 32 字" in first_payload["messages"][0]["content"]
+    assert "31 ~ 33 字" in first_payload["messages"][0]["content"]
     assert "search_query" in second_payload["messages"][0]["content"]
     assert requests[0].headers["idempotency-key"] == "script-request"
 
@@ -175,8 +180,21 @@ def test_script_duration_is_guidance_not_a_failure_limit(tmp_path: Path) -> None
         "海洋生命", 10, AspectRatio.PORTRAIT, 1, None, "duration-guidance"
     )
 
-    assert script.total_duration_seconds == 14.93
-    assert calls == 3
+    assert script.total_duration_seconds == 17.78
+    assert calls == 4
+
+
+def test_narration_count_excludes_mimo_voice_control_tags() -> None:
+    assert _narration_char_count("（深沉、坚定）海洋连接着所有生命。") == 9
+    assert _narration_char_count("(温柔)(欣慰)一起守护蔚蓝。") == 6
+    assert _spoken_narration_text("(温柔)(欣慰)一起守护蔚蓝。") == "一起守护蔚蓝。"
+
+
+def test_subtitle_split_keeps_punctuation_with_spoken_text() -> None:
+    lines = _split_subtitle("它提供食物，养活数十亿人。", max_chars=8)
+    assert "".join(lines) == "它提供食物，养活数十亿人。"
+    assert all(not line.startswith(tuple("，。！？；、：,.!?;:")) for line in lines)
+    assert _split_subtitle("一二三四五六七八。", max_chars=8) == ["一二三四五六七八。"]
 
 
 def _wav_bytes() -> bytes:
@@ -200,6 +218,36 @@ def test_wav_concat_accepts_segments_with_different_frame_counts(tmp_path: Path)
 
     with wave.open(str(combined), "rb") as audio:
         assert audio.getnframes() == round(0.55 * audio.getframerate())
+
+
+def test_ffmpeg_renderer_retimes_audio_to_exact_duration(tmp_path: Path) -> None:
+    settings = real_settings(tmp_path)
+    store = ArtifactStore(settings.media_root)
+    renderer = FfmpegRenderer(settings)
+    source = store.artifact_path(
+        "48da6f89-4533-43fb-8a78-950cec8213cd",
+        "307ba0f2-5fb1-48b2-a81d-ad50ec4083b4",
+        "audio",
+        "source.wav",
+    )
+    output = source.with_name("aligned.wav")
+    _write_wave(source, 1.8, 220, 0.1)
+    segment = AudioSegment(
+        segment_id="scene-01",
+        relative_path=store.relative_path(source),
+        duration_ms=1800,
+        sample_rate=16_000,
+        provider="test",
+        voice_id=MimoVoiceId.BAI_HUA,
+        checksum=store.checksum(source),
+    )
+
+    aligned = renderer.retime_audio(segment, 1000, output, store)
+
+    assert aligned.duration_ms == 1000
+    assert aligned.relative_path == store.relative_path(output)
+    assert aligned.checksum == store.checksum(output)
+    assert source.exists()
 
 
 def test_mimo_tts_request_uses_selected_voice_and_decodes_audio(tmp_path: Path) -> None:

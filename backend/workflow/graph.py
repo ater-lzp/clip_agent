@@ -20,6 +20,7 @@ from backend.domain.models import (
     AspectRatio,
     AudioSegment,
     BgmAction,
+    BgmSelection,
     MaterialAsset,
     MimoVoiceId,
     ReviewAction,
@@ -58,23 +59,68 @@ def _srt_timestamp(milliseconds: int) -> str:
 
 
 def _split_subtitle(text: str, max_chars: int = 18) -> list[str]:
-    parts = re.split(r"([，。！？；、：,.!?;:])", text.strip())
+    parts = re.findall(r"[^，。！？；、：,.!?;:]+[，。！？；、：,.!?;:]*", text.strip())
     lines: list[str] = []
     current = ""
     for part in parts:
-        if not part:
-            continue
-        current += part
-        if part in "。！？；.!?;" or len(current) >= max_chars:
-            lines.append(current.strip())
+        remaining = part.strip()
+        while remaining:
+            available = max_chars - len(current)
+            if len(remaining) <= available:
+                current += remaining
+                remaining = ""
+            elif current:
+                lines.append(current)
+                current = ""
+            else:
+                split_at = max_chars
+                while split_at < len(remaining) and remaining[split_at] in "，。！？；、：,.!?;:":
+                    split_at += 1
+                lines.append(remaining[:split_at])
+                remaining = remaining[split_at:]
+        if current.endswith(tuple("。！？；.!?;")):
+            lines.append(current)
             current = ""
     if current.strip():
         lines.append(current.strip())
     return lines or ([text.strip()] if text.strip() else [])
 
 
+def _spoken_narration_text(text: str) -> str:
+    return re.sub(r"^(?:[（(][^）)]{1,40}[）)]\s*)+", "", text.strip()).strip()
+
+
 def _narration_char_count(text: str) -> int:
-    return len(re.findall(r"[\u4e00-\u9fffA-Za-z0-9]", text))
+    return len(re.findall(r"[\u4e00-\u9fffA-Za-z0-9]", _spoken_narration_text(text)))
+
+
+def _proportional_durations(duration_ms: list[int], target_total_ms: int) -> list[int]:
+    if not duration_ms or any(value <= 0 for value in duration_ms):
+        raise WorkflowValidationError("synthesized audio duration is invalid")
+    if target_total_ms < len(duration_ms):
+        raise WorkflowValidationError("target duration is too short for audio segments")
+    source_total = sum(duration_ms)
+    raw_targets = [value * target_total_ms / source_total for value in duration_ms]
+    targets = [max(1, int(value)) for value in raw_targets]
+    remainder = target_total_ms - sum(targets)
+    order = sorted(
+        range(len(targets)),
+        key=lambda index: raw_targets[index] - int(raw_targets[index]),
+        reverse=remainder > 0,
+    )
+    step = 1 if remainder > 0 else -1
+    for index in order:
+        if remainder == 0:
+            break
+        if step < 0 and targets[index] <= 1:
+            continue
+        targets[index] += step
+        remainder -= step
+    if remainder != 0:
+        targets[-1] += remainder
+    if targets[-1] <= 0 or sum(targets) != target_total_ms:
+        raise WorkflowValidationError("failed to allocate target audio durations")
+    return targets
 
 
 class WorkflowNodes:
@@ -331,7 +377,55 @@ class WorkflowNodes:
             return audio
 
         with ThreadPoolExecutor(max_workers=min(5, len(script.segments))) as executor:
-            audio_segments = list(executor.map(synthesize_one, script.segments))
+            raw_audio_segments = list(executor.map(synthesize_one, script.segments))
+
+        target_total_ms = round(
+            float(state.get("target_duration_seconds", script.total_duration_seconds)) * 1000
+        )
+        target_durations = _proportional_durations(
+            [item.duration_ms for item in raw_audio_segments], target_total_ms
+        )
+
+        def retime_one(indexed_audio: tuple[int, AudioSegment]) -> AudioSegment:
+            index, audio = indexed_audio
+            target_duration_ms = target_durations[index]
+            manifest = self._manifest(
+                state, f"tts-aligned-v{script.version}-{audio.segment_id}.json"
+            )
+            output_path = self.store.artifact_path(
+                state["user_id"],
+                state["task_id"],
+                "audio",
+                f"{audio.segment_id}-v{script.version}-aligned.wav",
+            )
+            saved = self.store.load_json(manifest)
+            if saved and output_path.exists():
+                try:
+                    aligned = AudioSegment.model_validate(saved)
+                except ValidationError:
+                    saved = None
+                else:
+                    if (
+                        aligned.duration_ms != target_duration_ms
+                        or self.store.checksum(output_path) != aligned.checksum
+                    ):
+                        saved = None
+            if not saved:
+                aligned = self.renderer.retime_audio(
+                    audio,
+                    target_duration_ms,
+                    output_path,
+                    self.store,
+                )
+                if abs(aligned.duration_ms - target_duration_ms) > 2:
+                    raise WorkflowValidationError("retimed audio duration is inaccurate")
+                self.store.save_json_atomic(manifest, aligned.model_dump(mode="json"))
+            return aligned
+
+        with ThreadPoolExecutor(max_workers=min(5, len(raw_audio_segments))) as executor:
+            audio_segments = list(executor.map(retime_one, enumerate(raw_audio_segments)))
+        if abs(sum(item.duration_ms for item in audio_segments) - target_total_ms) > 2:
+            raise WorkflowValidationError("retimed narration does not match requested duration")
         self._status(state, TaskStatus.BUILDING_TIMELINE)
         return {
             "audio_segments": [item.model_dump(mode="json") for item in audio_segments],
@@ -455,7 +549,7 @@ class WorkflowNodes:
                     raise WorkflowValidationError("script segment has no timeline interval")
                 segment_start = segment_items[0].start_ms
                 segment_end = segment_items[-1].end_ms
-                lines = _split_subtitle(segment.narration)
+                lines = _split_subtitle(_spoken_narration_text(segment.narration))
                 total_chars = sum(max(1, len(line)) for line in lines)
                 cursor = segment_start
                 consumed_chars = 0
@@ -586,9 +680,20 @@ class WorkflowNodes:
             raise WorkflowValidationError("BGM volume is required")
         if action == BgmAction.ADD and not 0 <= float(volume) <= 1:
             raise WorkflowValidationError("BGM volume is out of range")
+        selection = None
+        if action == BgmAction.ADD:
+            try:
+                selection = BgmSelection.model_validate(decision.get("selection"))
+            except ValidationError as error:
+                raise WorkflowValidationError("BGM selection is invalid") from error
         return {
             "bgm_action": action.value,
             "bgm_volume": float(volume) if action == BgmAction.ADD else 0.0,
+            **(
+                {"bgm_selection": selection.model_dump(mode="json")}
+                if selection is not None
+                else {}
+            ),
             "review_history": [decision],
             "status": (
                 TaskStatus.PROCESSING_BGM.value
@@ -626,7 +731,12 @@ class WorkflowNodes:
         if saved and output_path.exists():
             bgm = saved
         else:
-            artifact = self.renderer.fetch_bgm(state["bgm_query"], preview.duration_ms, output_path)
+            artifact = self.renderer.fetch_bgm(
+                BgmSelection.model_validate(state["bgm_selection"]),
+                preview.duration_ms,
+                output_path,
+                self.store,
+            )
             bgm = artifact.model_dump(mode="json")
             self.store.save_json_atomic(manifest, bgm)
         return {"bgm_artifact": bgm}

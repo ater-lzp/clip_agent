@@ -45,6 +45,14 @@ def test_default_fake_providers_render_a_playable_mp4(test_settings) -> None:
         )
         assert preview_path.stat().st_size > 1000
         assert preview_path.read_bytes()[4:8] == b"ftyp"
+        cover_relative_path = service.ensure_cover(
+            user["id"], task["id"], review["preview_relative_path"]
+        )
+        cover_path = service.store.resolve_registered_path(
+            user["id"], task["id"], cover_relative_path
+        )
+        assert cover_path.stat().st_size > 1000
+        assert cover_path.read_bytes()[:2] == b"\xff\xd8"
 
         repository.claim_review(
             user_id=user["id"],
@@ -53,6 +61,9 @@ def test_default_fake_providers_render_a_playable_mp4(test_settings) -> None:
             version=1,
             action="add",
             volume=0.2,
+            bgm_selection=service.resolve_bgm_selection(
+                user["id"], task["id"], 1, service.bgm_catalog.list_tracks()[0].id
+            ),
         )
         service.run_now(task["id"])
         completed = repository.get_task(user["id"], task["id"])

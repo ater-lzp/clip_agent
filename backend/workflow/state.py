@@ -35,6 +35,7 @@ class GraphState(TypedDict):
     bgm_query: NotRequired[str]
     bgm_action: NotRequired[str]
     bgm_volume: NotRequired[float]
+    bgm_selection: NotRequired[dict]
     bgm_artifact: NotRequired[dict]
     final_video: NotRequired[dict]
     bgm_added: NotRequired[bool]

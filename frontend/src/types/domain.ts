@@ -27,10 +27,56 @@ export type TaskStatus =
   | 'processing_bgm'
   | 'completed'
   | 'failed'
+export type TaskListStatus = TaskStatus | 'in_progress'
+
+export interface BgmTrack {
+  id: string
+  name: string
+  source: 'library' | 'upload'
+  duration_seconds: number
+  preview_url: string
+}
 
 export interface User {
   id: string
   email: string
+  nickname: string | null
+  avatar_url: string | null
+  role: 'user' | 'admin'
+  created_at: string
+}
+
+export type MembershipTier = 'free' | 'vip' | 'svip'
+
+export interface AccountSummary {
+  membership_tier: MembershipTier
+  membership_expires_at: string | null
+  balance_cents: number
+  generation_quota: number
+  generations_used: number
+  generations_remaining: number
+  has_payment_password: boolean
+}
+
+export interface MembershipPlan {
+  tier: 'vip' | 'svip'
+  name: string
+  price_cents: number
+  duration_days: number
+  generation_credits: number
+}
+
+export interface AccountData {
+  account: AccountSummary
+  plans: MembershipPlan[]
+}
+
+export interface LedgerEntry {
+  id: string
+  kind: 'cdk_recharge' | 'membership_payment'
+  amount_cents: number
+  balance_after_cents: number
+  reference_type: string
   created_at: string
 }
 
@@ -130,6 +176,7 @@ export interface TaskSummary {
   updated_at: string
   preview_ready: boolean
   export_ready: boolean
+  cover_url: string | null
   error: SafeTaskError | null
 }
 
@@ -152,6 +199,7 @@ export type PendingReview =
       allowed_actions: BgmAction[]
       suggested_query: string
       default_volume: number
+      uploaded_track: BgmTrack | null
     }
 
 export interface TaskDetail extends TaskSummary {
@@ -173,6 +221,75 @@ export interface TaskPage {
   pages: number
 }
 
+export interface CommunityAuthor {
+  id: string
+  name: string
+  avatar_url: string | null
+}
+
+export interface CommunityPost {
+  id: string
+  task_id: string
+  title: string
+  description: string
+  author: CommunityAuthor
+  aspect_ratio: AspectRatio
+  duration_seconds: number
+  prompt_public: boolean
+  generation_prompt: string | null
+  tags: string[]
+  created_at: string
+  comment_count: number
+  share_count: number
+  favorite_count: number
+  like_count: number
+  favorited: boolean
+  liked: boolean
+  owned_by_me: boolean
+  video_url: string
+  cover_url: string
+}
+
+export interface TaskStats {
+  total: number
+  completed: number
+  failed: number
+  in_progress: number
+  awaiting_review: number
+  total_duration_seconds: number
+}
+
+export interface PublicUserProfile {
+  id: string
+  nickname: string | null
+  avatar_url: string | null
+  created_at: string
+  follower_count: number
+  following_count: number
+  post_count: number
+  is_following: boolean
+  is_self: boolean
+}
+
+export interface CommunityComment {
+  id: string
+  parent_id: string | null
+  content: string
+  author: CommunityAuthor
+  created_at: string
+  like_count: number
+  liked: boolean
+  can_delete: boolean
+}
+
+export interface CommunityPostPage {
+  items: CommunityPost[]
+  page: number
+  page_size: number
+  total: number
+  pages: number
+}
+
 export interface ApiErrorPayload {
   error: {
     code: string
@@ -181,4 +298,16 @@ export interface ApiErrorPayload {
     fields?: Array<{ field: string; message: string }>
     retryable: boolean
   }
+}
+
+export type AdSlotName = 'history' | 'community' | 'new_task' | 'task_detail'
+export type AdPlacement = 'auto' | AdSlotName
+
+export interface AdCreative {
+  id: string
+  title: string
+  link_url: string
+  placement: AdPlacement
+  image_url: string
+  image_media_type: 'image/jpeg' | 'image/png' | 'image/gif'
 }

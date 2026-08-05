@@ -19,6 +19,7 @@ from backend.infrastructure.security import configure_logging
 
 LOGGER = logging.getLogger(__name__)
 MAX_JSON_REQUEST_BYTES = 1_048_576
+MAX_MULTIPART_REQUEST_BYTES = 25 * 1024 * 1024 + 256 * 1024
 
 
 def _request_id(value: str | None) -> str:
@@ -52,7 +53,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=active_settings.allowed_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "X-CSRF-Token", "X-Request-ID", "Idempotency-Key"],
     )
 
@@ -64,7 +65,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             request_size = int(content_length) if content_length else 0
         except ValueError:
             request_size = MAX_JSON_REQUEST_BYTES + 1
-        if request_size > MAX_JSON_REQUEST_BYTES:
+        request_limit = (
+            MAX_MULTIPART_REQUEST_BYTES
+            if request.headers.get("content-type", "").lower().startswith("multipart/form-data")
+            else MAX_JSON_REQUEST_BYTES
+        )
+        if request_size > request_limit:
             response = api_error_response(
                 request, ApiError(413, "PAYLOAD_TOO_LARGE", "请求正文超过大小限制")
             )

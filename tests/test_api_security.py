@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import io
+import sqlite3
+
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from tests.conftest import csrf_headers, register_user, wait_for_status
 from tests.test_e2e_workflow import create_video
@@ -8,6 +12,104 @@ from tests.test_e2e_workflow import create_video
 
 def test_session_csrf_settings_and_logout(client: TestClient) -> None:
     assert client.get("/api/v1/auth/me").status_code == 401
+
+
+def test_profile_avatar_nickname_and_password_security(client: TestClient) -> None:
+    user = register_user(client, "profile@example.com")
+    assert user["nickname"] is None
+    assert user["avatar_url"] is None
+
+    updated = client.put(
+        "/api/v1/profile",
+        headers=csrf_headers(client),
+        json={"nickname": "海边创作者"},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["nickname"] == "海边创作者"
+
+    avatar = io.BytesIO()
+    Image.new("RGB", (360, 240), "#0284c7").save(avatar, format="PNG")
+    uploaded = client.post(
+        "/api/v1/profile/avatar",
+        headers=csrf_headers(client),
+        files={"file": ("avatar.png", avatar.getvalue(), "image/png")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    avatar_response = client.get(uploaded.json()["avatar_url"])
+    assert avatar_response.status_code == 200
+    with Image.open(io.BytesIO(avatar_response.content)) as saved:
+        assert saved.size == (200, 200)
+        assert saved.format == "JPEG"
+
+    wrong = client.post(
+        "/api/v1/profile/password",
+        headers=csrf_headers(client),
+        json={
+            "current_password": "wrong-password",
+            "new_password": "NewSecure1",
+            "confirm_password": "NewSecure1",
+        },
+    )
+    assert wrong.status_code == 400
+    changed = client.post(
+        "/api/v1/profile/password",
+        headers=csrf_headers(client),
+        json={
+            "current_password": "a-secure-test-password",
+            "new_password": "NewSecure1",
+            "confirm_password": "NewSecure1",
+        },
+    )
+    assert changed.status_code == 204
+    assert client.get("/api/v1/auth/me").status_code == 401
+    assert (
+        client.post(
+            "/api/v1/auth/login",
+            json={"email": "profile@example.com", "password": "a-secure-test-password"},
+        ).status_code
+        == 401
+    )
+    assert (
+        client.post(
+            "/api/v1/auth/login",
+            json={"email": "profile@example.com", "password": "NewSecure1"},
+        ).status_code
+        == 200
+    )
+    with sqlite3.connect(client.app.state.settings.database_path) as connection:
+        audit = connection.execute(
+            "SELECT action FROM audit_logs WHERE user_id = ?", (user["id"],)
+        ).fetchone()
+    assert audit == ("password_changed",)
+
+
+def test_nickname_is_unique_and_avatar_rejects_invalid_content(client: TestClient) -> None:
+    register_user(client, "first-profile@example.com")
+    assert (
+        client.put(
+            "/api/v1/profile",
+            headers=csrf_headers(client),
+            json={"nickname": "唯一昵称"},
+        ).status_code
+        == 200
+    )
+    invalid_avatar = client.post(
+        "/api/v1/profile/avatar",
+        headers=csrf_headers(client),
+        files={"file": ("fake.png", b"not-an-image", "image/png")},
+    )
+    assert invalid_avatar.status_code == 422
+    assert invalid_avatar.json()["error"]["code"] == "INVALID_IMAGE"
+
+    client.cookies.clear()
+    register_user(client, "second-profile@example.com")
+    duplicate = client.put(
+        "/api/v1/profile",
+        headers=csrf_headers(client),
+        json={"nickname": "唯一昵称"},
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.json()["error"]["code"] == "NICKNAME_EXISTS"
     user = register_user(client)
     assert client.get("/api/v1/auth/me").json()["id"] == user["id"]
     assert (
@@ -83,6 +185,7 @@ def test_user_isolation_and_safe_delete(authenticated_client: TestClient) -> Non
     register_user(owner, "intruder@example.com")
     assert owner.get(f"/api/v1/tasks/{task_id}").status_code == 404
     assert owner.get(f"/api/v1/tasks/{task_id}/preview").status_code == 404
+    assert owner.get(f"/api/v1/tasks/{task_id}/cover").status_code == 404
     assert owner.delete(f"/api/v1/tasks/{task_id}", headers=csrf_headers(owner)).status_code == 404
     owner.cookies.clear()
     owner.cookies.set("clip_session", owner_session)

@@ -219,6 +219,23 @@ class BgmArtifact(BaseModel):
     source: str
 
 
+class BgmSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    track_id: str = Field(min_length=8, max_length=100)
+    name: str = Field(min_length=1, max_length=100)
+    source: Literal["library", "upload"]
+    uploaded_relative_path: str | None = None
+
+    @model_validator(mode="after")
+    def validate_source_path(self) -> BgmSelection:
+        if self.source == "upload" and not self.uploaded_relative_path:
+            raise ValueError("uploaded BGM path is required")
+        if self.source == "library" and self.uploaded_relative_path is not None:
+            raise ValueError("library BGM must not include a task path")
+        return self
+
+
 class SafeWorkflowError(BaseModel):
     code: str
     message: str

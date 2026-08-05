@@ -53,7 +53,8 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   const method = (options.method ?? 'GET').toUpperCase()
   const headers = new Headers(options.headers)
   headers.set('Accept', 'application/json')
-  if (body !== undefined) headers.set('Content-Type', 'application/json')
+  const isFormData = body instanceof FormData
+  if (body !== undefined && !isFormData) headers.set('Content-Type', 'application/json')
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     const csrf = cookie('clip_csrf')
     if (csrf) headers.set('X-CSRF-Token', csrf)
@@ -63,7 +64,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
       ...fetchOptions,
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : isFormData ? body : JSON.stringify(body),
       credentials: 'include',
       signal: controller.signal,
     })

@@ -21,6 +21,11 @@ async function restore(): Promise<void> {
   }
 }
 
+async function refresh(): Promise<void> {
+  user.value = await authApi.me()
+  restored = true
+}
+
 function clear(): void {
   user.value = null
   restored = true
@@ -34,6 +39,11 @@ export function useSession() {
     restoring: readonly(restoring),
     authenticated: computed(() => user.value !== null),
     restore,
+    refresh,
+    setUser(value: User) {
+      user.value = value
+      restored = true
+    },
     async login(email: string, password: string) {
       user.value = await authApi.login(email, password)
       restored = true
@@ -52,4 +62,3 @@ export function useSession() {
     clear,
   }
 }
-

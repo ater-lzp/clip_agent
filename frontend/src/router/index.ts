@@ -5,6 +5,10 @@ import HistoryView from '../views/HistoryView.vue'
 import NewTaskView from '../views/NewTaskView.vue'
 import SettingsView from '../views/SettingsView.vue'
 import TaskDetailView from '../views/TaskDetailView.vue'
+import CommunityView from '../views/CommunityView.vue'
+import CommunityPostView from '../views/CommunityPostView.vue'
+import UserProfileView from '../views/UserProfileView.vue'
+import AccountView from '../views/AccountView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -21,7 +25,11 @@ const router = createRouter({
     { path: '/tasks', name: 'history', component: HistoryView },
     { path: '/tasks/new', name: 'new-task', component: NewTaskView },
     { path: '/tasks/:taskId', name: 'task-detail', component: TaskDetailView },
+    { path: '/community', name: 'community', component: CommunityView },
+    { path: '/community/posts/:postId', name: 'community-post', component: CommunityPostView },
+    { path: '/users/:userId', name: 'user-profile', component: UserProfileView },
     { path: '/settings', name: 'settings', component: SettingsView },
+    { path: '/account', name: 'account', component: AccountView },
     { path: '/:pathMatch(.*)*', redirect: '/tasks' },
   ],
 })

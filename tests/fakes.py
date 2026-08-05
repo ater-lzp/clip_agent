@@ -1,14 +1,32 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
-from backend.domain.models import BgmArtifact, VideoArtifact
+from backend.domain.models import AudioSegment, BgmArtifact, BgmSelection, VideoArtifact
 from backend.infrastructure.adapters import RendererAdapter
 from backend.infrastructure.storage import ArtifactStore
 
 
 class FastRenderer(RendererAdapter):
     name = "fast-test-renderer"
+
+    def retime_audio(
+        self,
+        segment: AudioSegment,
+        target_duration_ms: int,
+        output_path: Path,
+        store: ArtifactStore,
+    ) -> AudioSegment:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(store.media_root / segment.relative_path, output_path)
+        return segment.model_copy(
+            update={
+                "relative_path": store.relative_path(output_path),
+                "duration_ms": target_duration_ms,
+                "checksum": store.checksum(output_path),
+            }
+        )
 
     def render_preview(
         self,
@@ -30,11 +48,15 @@ class FastRenderer(RendererAdapter):
             has_bgm=False,
         )
 
-    def fetch_bgm(self, query: str, duration_ms: int, output_path: Path) -> BgmArtifact:
+    def fetch_bgm(
+        self,
+        selection: BgmSelection,
+        duration_ms: int,
+        output_path: Path,
+        store: ArtifactStore,
+    ) -> BgmArtifact:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(f"bgm:{query}".encode())
-        media_root = output_path.parents[3]
-        store = ArtifactStore(media_root)
+        output_path.write_bytes(f"bgm:{selection.track_id}".encode())
         return BgmArtifact(
             relative_path=store.relative_path(output_path),
             duration_ms=duration_ms,

@@ -95,14 +95,25 @@ def test_add_bgm_branch_and_timeline_is_real_audio_driven(
     storyboard = wait_for_status(client, task_id, "awaiting_storyboard_review")
     submit_review(client, task_id, "storyboard", storyboard["pending_review"]["version"], "approve")
     bgm = wait_for_status(client, task_id, "awaiting_bgm_decision")
+    tracks = client.get("/api/v1/bgms").json()["items"]
     response = client.post(
         f"/api/v1/tasks/{task_id}/bgm-decision",
         headers=csrf_headers(client),
-        json={"version": bgm["pending_review"]["version"], "action": "add", "volume": 0.25},
+        json={
+            "version": bgm["pending_review"]["version"],
+            "action": "add",
+            "volume": 0.25,
+            "track_id": tracks[0]["id"],
+        },
     )
     assert response.status_code == 202
     completed = wait_for_status(client, task_id, "completed")
     assert completed["bgm_added"] is True
+    mixed_preview = client.get(completed["preview_url"])
+    exported = client.get(completed["export_url"])
+    assert mixed_preview.status_code == 200
+    assert mixed_preview.content == exported.content
+    assert mixed_preview.content.startswith(b"mixed:")
     assert completed["final_duration_seconds"] == 10.0
 
     row = client.app.state.repository.get_task_internal(task_id)
