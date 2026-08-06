@@ -19,6 +19,7 @@ const voiceOptions = ref<VoiceOption[]>([])
 const providerMode = ref<ProviderMode>('real')
 const nickname = ref('')
 const avatarFile = ref<File | null>(null)
+const avatarInput = ref<HTMLInputElement | null>(null)
 const currentPassword = ref('')
 const newPassword = ref('')
 const confirmPassword = ref('')
@@ -28,6 +29,7 @@ const profileBusy = ref(false)
 const passwordBusy = ref(false)
 const message = ref('')
 const errorMessage = ref('')
+let avatarRevision = 0
 
 onMounted(async () => {
   nickname.value = session.user.value?.nickname ?? ''
@@ -76,16 +78,34 @@ function selectAvatar(event: Event): void {
   avatarFile.value = file
 }
 
+function resetAvatarInput(event: MouseEvent): void {
+  const input = event.currentTarget as HTMLInputElement
+  input.value = ''
+}
+
+function versionAvatarUrl(path: string): string {
+  const separator = path.includes('?') ? '&' : '?'
+  avatarRevision += 1
+  return `${path}${separator}v=${Date.now()}-${avatarRevision}`
+}
+
 async function saveProfile(): Promise<void> {
   if (profileBusy.value) return
   profileBusy.value = true
   resetMessages()
   try {
+    const selectedAvatar = avatarFile.value
     let updated = await profileApi.update(nickname.value)
-    if (avatarFile.value) updated = await profileApi.uploadAvatar(avatarFile.value)
+    if (selectedAvatar) {
+      updated = await profileApi.uploadAvatar(selectedAvatar)
+      if (updated.avatar_url) {
+        updated = { ...updated, avatar_url: versionAvatarUrl(updated.avatar_url) }
+      }
+    }
     session.setUser(updated)
     nickname.value = updated.nickname ?? ''
     avatarFile.value = null
+    if (avatarInput.value) avatarInput.value.value = ''
     message.value = '账户资料已更新'
   } catch (error) {
     errorMessage.value = error instanceof ApiError ? error.message : '账户资料更新失败'
@@ -137,7 +157,7 @@ async function changePassword(): Promise<void> {
             <label class="button secondary avatar-upload-button" for="avatar">
               <span aria-hidden="true">↑</span>
               {{ avatarFile ? '重新选择头像' : '选择头像' }}
-              <input id="avatar" type="file" accept="image/jpeg,image/png" @change="selectAvatar" />
+              <input ref="avatarInput" id="avatar" type="file" accept="image/jpeg,image/png" @click="resetAvatarInput" @change="selectAvatar" />
             </label>
           </div>
         </div>

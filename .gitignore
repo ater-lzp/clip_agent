@@ -15,3 +15,6 @@ admin/node_modules/
 admin/dist/
 admin/coverage/
 *.log
+doc/
+work/
+.idea

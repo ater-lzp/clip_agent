@@ -25,6 +25,9 @@
   --button-primary-text: #06130d;
   --button-secondary-bg: #19263a;
   --button-secondary-text: #f4f7fc;
+  --progress-bg: rgba(12, 22, 36, .8);
+  --progress-track-bg: #203047;
+  --progress-muted: #9fb1c9;
   --border: var(--line);
   --surface-soft: var(--surface-raised);
 }
@@ -53,6 +56,9 @@
   --button-primary-text: #ffffff;
   --button-secondary-bg: #19304d;
   --button-secondary-text: #ffffff;
+  --progress-bg: #eaf6fd;
+  --progress-track-bg: #c5e2f2;
+  --progress-muted: #405b73;
 }
 
 * { box-sizing: border-box; }
@@ -261,10 +267,10 @@ input[type='range'] { min-height: auto; padding: 0; accent-color: var(--accent);
 .detail-heading h1 { max-width: 850px; font-size: clamp(1.8rem, 4vw, 3rem); }
 .back-link { display: inline-block; margin-bottom: 1rem; color: var(--muted); }
 .heading-actions { display: flex; gap: .6rem; }
-.progress-block { padding: 1rem 1.2rem; border: 1px solid var(--line); border-radius: 13px; background: rgba(12, 22, 36, .8); }
+.progress-block { padding: 1rem 1.2rem; border: 1px solid var(--line); border-radius: 13px; color: var(--text); background: var(--progress-bg); }
 .progress-copy { display: flex; justify-content: space-between; margin-bottom: .7rem; font-size: .83rem; }
-.progress-copy span { color: var(--muted); }
-.progress-track { height: 5px; border-radius: 99px; background: #203047; overflow: hidden; }
+.progress-copy span { color: var(--progress-muted); }
+.progress-track { height: 5px; border-radius: 99px; background: var(--progress-track-bg); overflow: hidden; }
 .progress-track > span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .3s ease; }
 .progress-track > span.failed { background: var(--danger); }
 .floating-error { margin: 1rem 0; }
