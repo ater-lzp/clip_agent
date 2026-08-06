@@ -164,10 +164,8 @@ def main() -> None:
 
         target_ms = arguments.duration * 1000
         audio_total_ms = sum(item.duration_ms for item in audio)
-        if audio_total_ms != target_ms:
-            raise RuntimeError("aligned TTS duration differs from the requested duration")
-        if not timeline or timeline[0].start_ms != 0 or timeline[-1].end_ms != target_ms:
-            raise RuntimeError("timeline boundaries differ from aligned TTS")
+        if not timeline or timeline[0].start_ms != 0 or timeline[-1].end_ms != audio_total_ms:
+            raise RuntimeError("timeline boundaries differ from synthesized TTS")
         if any(
             previous.end_ms != current.start_ms
             for previous, current in zip(timeline, timeline[1:], strict=False)
@@ -190,8 +188,8 @@ def main() -> None:
 
         subtitle_path = settings.media_root / subtitle.relative_path
         cues = _parse_srt(subtitle_path)
-        if not cues or cues[0][0] != 0 or cues[-1][1] != target_ms:
-            raise RuntimeError("SRT boundaries differ from the aligned timeline")
+        if not cues or cues[0][0] != 0 or cues[-1][1] != audio_total_ms:
+            raise RuntimeError("SRT boundaries differ from the audio timeline")
         if any(
             previous[1] != current[0] for previous, current in zip(cues, cues[1:], strict=False)
         ):
@@ -204,14 +202,14 @@ def main() -> None:
 
         preview_path = settings.media_root / preview.relative_path
         final_path = settings.media_root / final.relative_path
-        preview_probe = _ffmpeg_probe(preview_path, arguments.duration)
-        final_probe = _ffmpeg_probe(final_path, arguments.duration)
+        preview_probe = _ffmpeg_probe(preview_path, audio_total_ms / 1000)
+        final_probe = _ffmpeg_probe(final_path, audio_total_ms / 1000)
         expected_dimensions = [720, 1280] if arguments.aspect_ratio == "9:16" else [1280, 720]
         if preview_probe["dimensions"] != expected_dimensions:
             raise RuntimeError("rendered video dimensions differ from the selected aspect ratio")
         for probe in (preview_probe, final_probe):
-            if abs(int(probe["duration_ms"]) - target_ms) > 150:
-                raise RuntimeError("rendered media duration differs from the aligned timeline")
+            if abs(int(probe["duration_ms"]) - audio_total_ms) > 150:
+                raise RuntimeError("rendered media duration differs from the audio timeline")
         sampled_backgrounds = _sample_backgrounds(preview_path, timeline)
         if len(timeline) > 1 and len(set(sampled_backgrounds)) < 2:
             raise RuntimeError("rendered video does not switch visuals with timeline shots")
@@ -220,7 +218,7 @@ def main() -> None:
                 raise RuntimeError("the final video does not contain the selected BGM mix")
         elif final.has_bgm or final.checksum != preview.checksum:
             raise RuntimeError("the no-BGM branch did not preserve the preview")
-        if complete["final_duration_ms"] != target_ms:
+        if complete["final_duration_ms"] != audio_total_ms:
             raise RuntimeError("database duration differs from the validated timeline")
 
         print(

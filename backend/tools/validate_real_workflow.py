@@ -240,11 +240,6 @@ def main() -> None:
 
         audio_total_ms = sum(item.duration_ms for item in audio)
         target_duration_ms = int(task["target_duration_seconds"]) * 1000
-        target_tolerance_ms = max(3000, round(target_duration_ms * 0.1))
-        if abs(audio_total_ms - target_duration_ms) > target_tolerance_ms:
-            raise RuntimeError(
-                "real narration duration differs from the requested target by more than 10%"
-            )
         if timeline[0].start_ms != 0 or timeline[-1].end_ms != audio_total_ms:
             raise RuntimeError("timeline is not bounded by the real narration duration")
         for previous, current in zip(timeline, timeline[1:], strict=False):

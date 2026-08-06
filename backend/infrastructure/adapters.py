@@ -96,14 +96,6 @@ class MaterialAdapter(Protocol):
 class RendererAdapter(Protocol):
     name: str
 
-    def retime_audio(
-        self,
-        segment: AudioSegment,
-        target_duration_ms: int,
-        output_path: Path,
-        store: ArtifactStore,
-    ) -> AudioSegment: ...
-
     def render_preview(
         self,
         *,
@@ -901,7 +893,9 @@ class FakeTtsAdapter:
         output_path: Path,
         idempotency_key: str,
     ) -> AudioSegment:
-        duration = max(0.8, segment.estimated_duration_seconds)
+        duration = max(
+            0.8, _spoken_char_count(segment.narration) / MIMO_CALIBRATED_CHARS_PER_SECOND
+        )
         _write_wave(output_path, duration, 180 + segment.order * 22, 0.035)
         duration_ms, sample_rate = _wave_duration_ms(output_path)
         return AudioSegment(
@@ -1385,58 +1379,6 @@ class FfmpegRenderer:
         self.bgm_library_dir = settings.bgm_library_dir
         self.bgm_catalog = BgmCatalog(settings.bgm_library_dir)
         self.media_root = settings.media_root
-
-    def retime_audio(
-        self,
-        segment: AudioSegment,
-        target_duration_ms: int,
-        output_path: Path,
-        store: ArtifactStore,
-    ) -> AudioSegment:
-        if target_duration_ms <= 0:
-            raise ProviderError("配音目标时长无效", retryable=False)
-        source_path = store.media_root / segment.relative_path
-        if not source_path.is_file():
-            raise ProviderError("待校准的配音片段不存在", retryable=True)
-        tempo = segment.duration_ms / target_duration_ms
-        tempo_factors: list[float] = []
-        while tempo > 2.0:
-            tempo_factors.append(2.0)
-            tempo /= 2.0
-        while tempo < 0.5:
-            tempo_factors.append(0.5)
-            tempo /= 0.5
-        tempo_factors.append(tempo)
-        tempo_filter = ",".join(f"atempo={factor:.8f}" for factor in tempo_factors)
-        duration_seconds = target_duration_ms / 1000
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        _run_ffmpeg(
-            [
-                self.ffmpeg,
-                "-y",
-                "-i",
-                str(source_path),
-                "-filter:a",
-                f"{tempo_filter},apad,atrim=duration={duration_seconds:.6f}",
-                "-ac",
-                "1",
-                "-ar",
-                str(segment.sample_rate),
-                "-c:a",
-                "pcm_s16le",
-                str(output_path),
-            ],
-            timeout=120,
-        )
-        duration_ms, sample_rate = _wave_duration_ms(output_path)
-        return segment.model_copy(
-            update={
-                "relative_path": store.relative_path(output_path),
-                "duration_ms": duration_ms,
-                "sample_rate": sample_rate,
-                "checksum": store.checksum(output_path),
-            }
-        )
 
     def render_preview(
         self,

@@ -94,35 +94,6 @@ def _narration_char_count(text: str) -> int:
     return len(re.findall(r"[\u4e00-\u9fffA-Za-z0-9]", _spoken_narration_text(text)))
 
 
-def _proportional_durations(duration_ms: list[int], target_total_ms: int) -> list[int]:
-    if not duration_ms or any(value <= 0 for value in duration_ms):
-        raise WorkflowValidationError("synthesized audio duration is invalid")
-    if target_total_ms < len(duration_ms):
-        raise WorkflowValidationError("target duration is too short for audio segments")
-    source_total = sum(duration_ms)
-    raw_targets = [value * target_total_ms / source_total for value in duration_ms]
-    targets = [max(1, int(value)) for value in raw_targets]
-    remainder = target_total_ms - sum(targets)
-    order = sorted(
-        range(len(targets)),
-        key=lambda index: raw_targets[index] - int(raw_targets[index]),
-        reverse=remainder > 0,
-    )
-    step = 1 if remainder > 0 else -1
-    for index in order:
-        if remainder == 0:
-            break
-        if step < 0 and targets[index] <= 1:
-            continue
-        targets[index] += step
-        remainder -= step
-    if remainder != 0:
-        targets[-1] += remainder
-    if targets[-1] <= 0 or sum(targets) != target_total_ms:
-        raise WorkflowValidationError("failed to allocate target audio durations")
-    return targets
-
-
 class WorkflowNodes:
     def __init__(
         self,
@@ -377,55 +348,9 @@ class WorkflowNodes:
             return audio
 
         with ThreadPoolExecutor(max_workers=min(5, len(script.segments))) as executor:
-            raw_audio_segments = list(executor.map(synthesize_one, script.segments))
-
-        target_total_ms = round(
-            float(state.get("target_duration_seconds", script.total_duration_seconds)) * 1000
-        )
-        target_durations = _proportional_durations(
-            [item.duration_ms for item in raw_audio_segments], target_total_ms
-        )
-
-        def retime_one(indexed_audio: tuple[int, AudioSegment]) -> AudioSegment:
-            index, audio = indexed_audio
-            target_duration_ms = target_durations[index]
-            manifest = self._manifest(
-                state, f"tts-aligned-v{script.version}-{audio.segment_id}.json"
-            )
-            output_path = self.store.artifact_path(
-                state["user_id"],
-                state["task_id"],
-                "audio",
-                f"{audio.segment_id}-v{script.version}-aligned.wav",
-            )
-            saved = self.store.load_json(manifest)
-            if saved and output_path.exists():
-                try:
-                    aligned = AudioSegment.model_validate(saved)
-                except ValidationError:
-                    saved = None
-                else:
-                    if (
-                        aligned.duration_ms != target_duration_ms
-                        or self.store.checksum(output_path) != aligned.checksum
-                    ):
-                        saved = None
-            if not saved:
-                aligned = self.renderer.retime_audio(
-                    audio,
-                    target_duration_ms,
-                    output_path,
-                    self.store,
-                )
-                if abs(aligned.duration_ms - target_duration_ms) > 2:
-                    raise WorkflowValidationError("retimed audio duration is inaccurate")
-                self.store.save_json_atomic(manifest, aligned.model_dump(mode="json"))
-            return aligned
-
-        with ThreadPoolExecutor(max_workers=min(5, len(raw_audio_segments))) as executor:
-            audio_segments = list(executor.map(retime_one, enumerate(raw_audio_segments)))
-        if abs(sum(item.duration_ms for item in audio_segments) - target_total_ms) > 2:
-            raise WorkflowValidationError("retimed narration does not match requested duration")
+            audio_segments = list(executor.map(synthesize_one, script.segments))
+        if any(item.duration_ms <= 0 for item in audio_segments):
+            raise WorkflowValidationError("synthesized audio duration is invalid")
         self._status(state, TaskStatus.BUILDING_TIMELINE)
         return {
             "audio_segments": [item.model_dump(mode="json") for item in audio_segments],

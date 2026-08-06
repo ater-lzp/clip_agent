@@ -8,6 +8,13 @@ from fastapi.testclient import TestClient
 from tests.conftest import csrf_headers, wait_for_status
 
 
+def srt_timestamp(milliseconds: int) -> str:
+    hours, remainder = divmod(milliseconds, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    seconds, millis = divmod(remainder, 1000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+
 def create_video(client: TestClient, topic: str = "量子纠缠入门") -> dict:
     idempotency_key = hashlib.sha256(topic.encode("utf-8")).hexdigest()
     response = client.post(
@@ -114,12 +121,17 @@ def test_add_bgm_branch_and_timeline_is_real_audio_driven(
     assert mixed_preview.status_code == 200
     assert mixed_preview.content == exported.content
     assert mixed_preview.content.startswith(b"mixed:")
-    assert completed["final_duration_seconds"] == 10.0
 
     row = client.app.state.repository.get_task_internal(task_id)
+    graph_state = client.app.state.workflow_service.graph.get_state(
+        {"configurable": {"thread_id": row["thread_id"]}}
+    ).values
+    audio_total_ms = sum(item["duration_ms"] for item in graph_state["audio_segments"])
+    assert audio_total_ms != row["target_duration_seconds"] * 1000
+    assert completed["final_duration_seconds"] == audio_total_ms / 1000
     timeline = row["timeline"]
     assert timeline[0]["start_ms"] == 0
-    assert timeline[-1]["end_ms"] == 10_000
+    assert timeline[-1]["end_ms"] == audio_total_ms
     assert all(
         previous["end_ms"] == current["start_ms"] for previous, current in pairwise(timeline)
     )
@@ -128,4 +140,4 @@ def test_add_bgm_branch_and_timeline_is_real_audio_driven(
     )
     subtitle_text = subtitle_path.read_text(encoding="utf-8")
     assert "00:00:00,000 -->" in subtitle_text
-    assert "00:00:10,000" in subtitle_text
+    assert srt_timestamp(audio_total_ms) in subtitle_text

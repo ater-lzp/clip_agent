@@ -1,32 +1,14 @@
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
-from backend.domain.models import AudioSegment, BgmArtifact, BgmSelection, VideoArtifact
+from backend.domain.models import BgmArtifact, BgmSelection, VideoArtifact
 from backend.infrastructure.adapters import RendererAdapter
 from backend.infrastructure.storage import ArtifactStore
 
 
 class FastRenderer(RendererAdapter):
     name = "fast-test-renderer"
-
-    def retime_audio(
-        self,
-        segment: AudioSegment,
-        target_duration_ms: int,
-        output_path: Path,
-        store: ArtifactStore,
-    ) -> AudioSegment:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(store.media_root / segment.relative_path, output_path)
-        return segment.model_copy(
-            update={
-                "relative_path": store.relative_path(output_path),
-                "duration_ms": target_duration_ms,
-                "checksum": store.checksum(output_path),
-            }
-        )
 
     def render_preview(
         self,

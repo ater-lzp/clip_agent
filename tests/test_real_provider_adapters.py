@@ -13,13 +13,11 @@ import pytest
 from backend.config import Settings
 from backend.domain.models import (
     AspectRatio,
-    AudioSegment,
     MimoVoiceId,
     ScriptSegment,
     StoryboardShot,
 )
 from backend.infrastructure.adapters import (
-    FfmpegRenderer,
     MimoTtsAdapter,
     OpenAICompatibleLlmAdapter,
     PexelsAdapter,
@@ -218,36 +216,6 @@ def test_wav_concat_accepts_segments_with_different_frame_counts(tmp_path: Path)
 
     with wave.open(str(combined), "rb") as audio:
         assert audio.getnframes() == round(0.55 * audio.getframerate())
-
-
-def test_ffmpeg_renderer_retimes_audio_to_exact_duration(tmp_path: Path) -> None:
-    settings = real_settings(tmp_path)
-    store = ArtifactStore(settings.media_root)
-    renderer = FfmpegRenderer(settings)
-    source = store.artifact_path(
-        "48da6f89-4533-43fb-8a78-950cec8213cd",
-        "307ba0f2-5fb1-48b2-a81d-ad50ec4083b4",
-        "audio",
-        "source.wav",
-    )
-    output = source.with_name("aligned.wav")
-    _write_wave(source, 1.8, 220, 0.1)
-    segment = AudioSegment(
-        segment_id="scene-01",
-        relative_path=store.relative_path(source),
-        duration_ms=1800,
-        sample_rate=16_000,
-        provider="test",
-        voice_id=MimoVoiceId.BAI_HUA,
-        checksum=store.checksum(source),
-    )
-
-    aligned = renderer.retime_audio(segment, 1000, output, store)
-
-    assert aligned.duration_ms == 1000
-    assert aligned.relative_path == store.relative_path(output)
-    assert aligned.checksum == store.checksum(output)
-    assert source.exists()
 
 
 def test_mimo_tts_request_uses_selected_voice_and_decodes_audio(tmp_path: Path) -> None:
