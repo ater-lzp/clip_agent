@@ -1,0 +1,22 @@
+FROM python:3.10-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# 先复制依赖声明以获得更好的层缓存
+COPY pyproject.toml uv.lock ./
+COPY backend/ ./backend/
+
+# 只安装运行依赖，不装 dev extra。FFmpeg 由 imageio-ffmpeg wheel 自带静态二进制。
+RUN pip install --no-cache-dir .
+
+# 内置许可 BGM 曲库
+COPY backend/bgms/ ./backend/bgms/
+
+# 容器经 compose 内部网络访问，宿主机端口由 nginx 暴露
+EXPOSE 8000
+
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

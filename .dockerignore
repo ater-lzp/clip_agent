@@ -1,0 +1,17 @@
+# Docker 构建上下文位于仓库根，排除本地开发文件与产物
+.env
+.venv/
+data/
+**/node_modules/
+**/dist/
+**/coverage/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.git/
+.idea/
+*.log
+doc/
+work/

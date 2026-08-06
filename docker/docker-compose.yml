@@ -1,0 +1,38 @@
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    env_file:
+      - .env
+    environment:
+      # 浏览器经 nginx 访问，Cookie 同源，Origin 白名单覆盖两个站点
+      CLIP_ALLOWED_ORIGINS: http://localhost:8080,http://localhost:8081
+      # TrustedHost 按 hostname 匹配（不带端口）
+      CLIP_ALLOWED_HOSTS: localhost,127.0.0.1
+    volumes:
+      - clip-data:/data
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  admin:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.admin
+    ports:
+      - "8081:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  clip-data:
